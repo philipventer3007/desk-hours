@@ -23,6 +23,8 @@
                      linear-gradient(135deg, var(--c1), var(--c2) 50%, var(--c1)) border-box;
          box-shadow: 0 0 14px -5px var(--c1), inset 0 1px 0 rgb(255 255 255 / .06); }
   .tier-badge { flex: none; height: 1.35rem; width: auto; filter: drop-shadow(0 0 4px var(--c1)); }
+  /* Disabled member: greyed out, but the cheater badge keeps its colour */
+  .cheater .dim { opacity: .4; filter: grayscale(1); }
 </style>
 <style type="text/tailwindcss">
   .card { @apply bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3; }
@@ -46,6 +48,17 @@
 
   <div id="msg" class="fixed top-4 inset-x-4 mx-auto max-w-md rounded-lg px-4 py-3 text-sm text-white shadow-lg z-10" hidden></div>
 
+  <!-- In-page yes/no box (used instead of confirm(), which some browsers block) -->
+  <div id="ask" class="fixed inset-0 z-20 flex items-center justify-center bg-black/60 px-4" hidden>
+    <div class="card w-full max-w-sm">
+      <p id="ask-text"></p>
+      <div class="flex gap-2">
+        <button id="ask-no" class="btn-ghost flex-1">Cancel</button>
+        <button id="ask-yes" class="btn flex-1 bg-red-500 hover:bg-red-400">Yes</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Auth -->
   <section id="auth" class="card">
     <h2 id="auth-title" class="text-lg font-semibold">Log in</h2>
@@ -68,15 +81,17 @@
   </section>
 
   <!-- Nav -->
-  <nav id="nav" class="grid grid-cols-3 gap-2 mb-4" hidden>
+  <nav id="nav" class="grid grid-flow-col auto-cols-fr gap-2 mb-4" hidden>
     <button data-section="home" class="btn-ghost">Home</button>
     <button data-section="log" class="btn-ghost">Sessions</button>
     <button data-section="stats" class="btn-ghost">My stats</button>
+    <button id="nav-admin" data-section="admin" class="btn-ghost" hidden>Admin</button>
   </nav>
 
   <!-- Home: timer + leaderboard -->
   <section id="home" class="space-y-4" hidden>
-    <div class="card">
+    <p id="cheater-note" class="rounded-2xl border border-red-800 bg-red-950 p-4 text-sm text-red-200" hidden>Your account has been flagged as a cheater by the admin. You can still see the leaderboard, but you can't log time or post messages. Ask the admin if you think this is a mistake.</p>
+    <div id="timer-card" class="card">
       <h2 class="font-semibold">Timer</h2>
       <input id="timer-subject" class="input" placeholder="Subject (e.g. Maths)" maxlength="60">
       <div id="timer-display" class="text-5xl font-mono text-center py-2 tabular-nums">00:00:00</div>
@@ -166,6 +181,15 @@
       </div>
     </form>
   </section>
+
+  <!-- Admin (only shown to admins; the database checks too) -->
+  <section id="admin" class="space-y-4" hidden>
+    <div class="card">
+      <h2 class="font-semibold">Members</h2>
+      <p class="text-xs text-slate-500">Disabled members can still see everything but can't log time or post messages; they show greyed out on the leaderboard with a cheater badge, below everyone with time and above people on 0. Reset deletes their saved sessions for the chosen period; a timer running in their browser isn't affected.</p>
+      <ul id="admin-users" class="divide-y divide-slate-800"></ul>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -187,6 +211,7 @@ if (SUPABASE_URL.startsWith('YOUR_') || SUPABASE_ANON_KEY.startsWith('YOUR_')) {
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let me = null;          // signed-in auth user
+let meDisabled = false; // flagged as a cheater: can look but not log time
 let signupMode = false;
 let period = 'today';   // leaderboard tab
 let editingId = null;   // session being edited in the manual form
@@ -212,6 +237,19 @@ function flash(text, isError = false) {
   el.hidden = false;
   clearTimeout(flashHandle);
   flashHandle = setTimeout(() => (el.hidden = true), isError ? 6000 : 3000);
+}
+
+// Resolves true for Yes, false for Cancel (or a click outside the box).
+function ask(text) {
+  $('ask-text').textContent = text;
+  $('ask').hidden = false;
+  return new Promise((resolve) => {
+    const done = (ok) => { $('ask').hidden = true; $('ask').onclick = null; resolve(ok); };
+    $('ask').onclick = (e) => {
+      if (e.target.id === 'ask-yes') done(true);
+      else if (e.target.id === 'ask-no' || e.target.id === 'ask') done(false);
+    };
+  });
 }
 
 // ---------- Auth ----------
@@ -254,11 +292,16 @@ sb.auth.onAuthStateChange((_event, session) => {
   setTimeout(() => (me ? enterApp() : leaveApp()), 0); // don't call Supabase inside the callback
 });
 
-function enterApp() {
+async function enterApp() {
+  const profile = await loadProfile();
+  if (!me) return; // signed out while loading
+  meDisabled = !!profile?.disabled;
+  for (const id of ['timer-card', 'note-form', 'manual-form', 'name-form']) $(id).hidden = meDisabled;
+  $('cheater-note').hidden = !meDisabled;
+  $('nav-admin').hidden = !profile?.is_admin;
   $('auth').hidden = true;
   $('nav').hidden = false;
   $('signout').hidden = false;
-  loadProfile();
   resumeTimer();
   resetManual();
   show('home');
@@ -267,34 +310,36 @@ function enterApp() {
   clearInterval(liveHandle);
   liveHandle = setInterval(() => { if (!$('home').hidden) renderBoard(); }, 1000);
   const t = readTimer();
-  if (t) publishTimer(t); // share a timer started before this page load
+  if (t && !meDisabled) publishTimer(t); // share a timer started before this page load
 }
 
 function leaveApp() {
   clearInterval(boardHandle);
   clearInterval(liveHandle);
   clearInterval(tickHandle);
-  for (const id of ['nav', 'signout', 'home', 'log', 'stats']) $(id).hidden = true;
+  for (const id of ['nav', 'nav-admin', 'signout', 'home', 'log', 'stats', 'admin']) $(id).hidden = true;
   $('auth').hidden = false;
   $('who').textContent = '';
   setMode(false);
 }
 
 async function loadProfile() {
-  const { data, error } = await sb.from('profiles').select('display_name').eq('id', me.id).maybeSingle();
+  const { data, error } = await sb.from('profiles').select('display_name, is_admin, disabled').eq('id', me.id).maybeSingle();
   if (error) return flash(error.message, true);
   const name = data?.display_name ?? '';
   $('who').textContent = name ? `Hi, ${name}` : '';
   $('name-input').value = name;
+  return data;
 }
 
 // ---------- Section switching ----------
 function show(name) {
-  for (const id of ['home', 'log', 'stats']) $(id).hidden = id !== name;
+  for (const id of ['home', 'log', 'stats', 'admin']) $(id).hidden = id !== name;
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('tab-on', b.dataset.section === name));
   if (name === 'home') loadBoard();
   if (name === 'log') loadSessions();
   if (name === 'stats') loadStats();
+  if (name === 'admin') loadAdmin();
 }
 document.querySelectorAll('#nav button').forEach((b) => (b.onclick = () => show(b.dataset.section)));
 
@@ -380,9 +425,9 @@ $('timer-pause').onclick = () => {
 };
 
 // Only offered while paused, so a running session can't be thrown away by a stray tap.
-$('timer-discard').onclick = () => {
+$('timer-discard').onclick = async () => {
   const t = readTimer();
-  if (!t?.pausedAt || !confirm(`Discard this ${fmt(Math.floor(elapsedMs(t) / 60000))} session of ${t.subject}? It won't be saved.`)) return;
+  if (!t?.pausedAt || !(await ask(`Discard this ${fmt(Math.floor(elapsedMs(t) / 60000))} session of ${t.subject}? It won't be saved.`))) return;
   localStorage.removeItem(TIMER_KEY);
   resumeTimer();
   publishTimer(null);
@@ -473,15 +518,15 @@ async function loadSessions() {
         <p class="truncate">${esc(s.subject)}</p>
         <p class="text-xs text-slate-500">${dayLabel(s.session_date)} · ${fmt(s.minutes)}</p>
       </div>
-      <button data-edit="${s.id}" class="btn-ghost text-xs">Edit</button>
-      <button data-del="${s.id}" class="btn-ghost text-xs text-red-300">Delete</button>
+      ${meDisabled ? '' : `<button data-edit="${s.id}" class="btn-ghost text-xs">Edit</button>
+      <button data-del="${s.id}" class="btn-ghost text-xs text-red-300">Delete</button>`}
     </li>`).join('') : '<li class="py-2 text-sm text-slate-500">Nothing logged yet.</li>';
 }
 
 $('sessions').onclick = async (e) => {
   const { edit, del } = e.target.dataset;
   if (edit) startEdit(mySessions.find((s) => String(s.id) === edit));
-  if (del && confirm('Delete this session?')) {
+  if (del && (await ask('Delete this session?'))) {
     const { error } = await sb.from('study_sessions').delete().eq('id', del);
     if (error) return flash(error.message, true);
     if (String(editingId) === del) resetManual();
@@ -492,8 +537,9 @@ $('sessions').onclick = async (e) => {
 
 // ---------- Leaderboard ----------
 // Live timers are added to saved time, so the board is ranked here and the
-// times tick every second between the 30s refreshes. Everyone is listed;
-// forgotten timers (6 h without a pause) are greyed out at the bottom.
+// times tick every second between the 30s refreshes. Everyone is listed:
+// people with time first, then disabled members (greyed out, cheater badge,
+// no rank), then people on 0, then forgotten timers (6 h without a pause).
 let boardRows = [], boardPeriod = period, boardFetchedAt = 0, boardKey = '';
 
 document.querySelectorAll('[data-period]').forEach((b) => (b.onclick = () => { period = b.dataset.period; loadBoard(); }));
@@ -560,18 +606,23 @@ function rankedBoard() {
     const ts = tierSecs(boardPeriod, secs, r.today_minutes * 60 + liveSecs);
     // Messages that pass their hour between refreshes disappear right away.
     const message = r.message != null && since < r.message_left_ms ? r.message : null;
-    return { ...r, running, forgotten, secs, message, tierBasis: ts, tier: ts == null ? null : tierFor(ts),
+    return { ...r, running, forgotten, secs, message, tierBasis: ts, tier: ts == null || r.disabled ? null : tierFor(ts),
              weekSecs: r.week_minutes * 60 + liveSecs, allSecs: r.all_minutes * 60 + liveSecs,
              time: liveMs == null ? fmt(r.total_minutes) : fmtSec(secs) };
-  }).sort((a, b) => a.forgotten - b.forgotten || b.secs - a.secs || b.weekSecs - a.weekSecs
+  }).map((r) => ({ ...r, group: r.disabled ? 1 : r.forgotten ? 3 : r.secs > 0 ? 0 : 2 }))
+    .sort((a, b) => a.group - b.group || b.secs - a.secs || b.weekSecs - a.weekSecs
                     || b.allSecs - a.allSecs || a.display_name.localeCompare(b.display_name));
   // Equal time is broken by this week's total, then all-time; only a full tie shares a rank.
-  rows.forEach((r, i) => {
-    const prev = rows[i - 1];
-    const tied = prev && prev.forgotten === r.forgotten && prev.secs === r.secs
+  // Disabled members get no rank and don't take up a place.
+  let prev = null, place = 0;
+  for (const r of rows) {
+    if (r.disabled) { r.rank = null; continue; }
+    place++;
+    const tied = prev && prev.group === r.group && prev.secs === r.secs
                  && prev.weekSecs === r.weekSecs && prev.allSecs === r.allSecs;
-    r.rank = tied ? prev.rank : i + 1;
-  });
+    r.rank = tied ? prev.rank : place;
+    prev = r;
+  }
   return rows;
 }
 
@@ -580,7 +631,7 @@ function rankedBoard() {
 function renderBoard() {
   const rows = rankedBoard();
   $('note-clear').hidden = !rows.find((r) => r.user_id === me.id)?.message;
-  const key = rows.map((r) => `${r.user_id}:${r.rank}:${r.running}:${r.forgotten}:${r.tier?.name}:${r.message != null}`).join();
+  const key = rows.map((r) => `${r.user_id}:${r.rank}:${r.running}:${r.forgotten}:${r.disabled}:${r.tier?.name}:${r.message != null}`).join();
   if (key === boardKey) {
     rows.forEach((r) => { const el = document.querySelector(`[data-time="${r.user_id}"]`); if (el) el.textContent = r.time; });
     return;
@@ -591,18 +642,19 @@ function renderBoard() {
     const t = r.tier;
     const style = t ? ` style="--c1:${t.c1};--c2:${t.c2};--bg:url('${t.bg}')"` : '';
     return `
-    <li class="pos flex items-center gap-3 px-4 py-3 ${r.forgotten ? 'opacity-40 grayscale' : ''}"${style}${r.forgotten ? ' title="Forgotten timer: paused after 6 hours without a break"' : ''}>
-      <span class="w-6 text-lg font-bold text-slate-300">${r.rank}</span>
+    <li class="pos flex items-center gap-3 px-4 py-3 ${r.forgotten && !r.disabled ? 'opacity-40 grayscale' : ''} ${r.disabled ? 'cheater' : ''}"${style}${r.disabled ? ' title="Flagged as a cheater by the admin"' : r.forgotten ? ' title="Forgotten timer: paused after 6 hours without a break"' : ''}>
+      <span class="dim w-6 text-lg font-bold text-slate-300">${r.rank ?? '–'}</span>
       <span class="flex-1 min-w-0">
         <span class="flex items-center gap-2">
           ${r.running ? '<span class="live-dot" title="Studying now"></span>' : ''}
-          <span class="truncate font-medium">${esc(r.display_name)}</span>
+          <span class="dim truncate font-medium">${esc(r.display_name)}</span>
           ${t ? `<img src="${t.logo}" alt="${t.name}" title="${t.name} tier${boardPeriod === 'week' ? ` · averaging ${fmt(Math.floor(r.tierBasis / 60))} a day` : ''}" class="tier-badge">` : ''}
-          ${mine ? '<span class="flex-none text-xs text-emerald-300">(you)</span>' : ''}
+          ${r.disabled ? '<span class="flex-none rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">🚩 Cheater</span>' : ''}
+          ${mine ? '<span class="dim flex-none text-xs text-emerald-300">(you)</span>' : ''}
         </span>
-        ${r.message ? `<span class="block mt-0.5 text-sm italic text-slate-300 break-words">💬 ${esc(r.message)}</span>` : ''}
+        ${r.message ? `<span class="dim block mt-0.5 text-sm italic text-slate-300 break-words">💬 ${esc(r.message)}</span>` : ''}
       </span>
-      <span data-time="${r.user_id}" class="w-28 text-right font-mono tabular-nums">${r.time}</span>
+      <span data-time="${r.user_id}" class="dim w-28 text-right font-mono tabular-nums">${r.time}</span>
     </li>`;
   }).join('') : '<li class="text-center text-slate-500 py-6">No one has joined yet.</li>';
 }
@@ -698,6 +750,58 @@ $('name-form').onsubmit = async (e) => {
   if (error) return flash(error.message, true);
   flash('Name updated');
   loadProfile();
+};
+
+// ---------- Admin: disable members, reset times ----------
+let adminUsers = [];
+
+async function loadAdmin() {
+  const { data, error } = await sb.rpc('admin_list_users');
+  if (error) return flash(error.message, true);
+  adminUsers = data;
+  $('admin-users').innerHTML = data.map((u) => `
+    <li class="py-3 space-y-2 ${u.disabled ? 'opacity-60' : ''}">
+      <div class="flex items-center gap-2">
+        <div class="flex-1 min-w-0">
+          <p class="truncate">${esc(u.display_name)}
+            ${u.is_admin ? '<span class="text-xs text-emerald-300">admin</span>' : ''}
+            ${u.disabled ? '<span class="text-xs text-red-300">disabled</span>' : ''}
+            ${u.user_id === me.id ? '<span class="text-xs text-emerald-300">(you)</span>' : ''}</p>
+          <p class="text-xs text-slate-500 truncate">${esc(u.email ?? '')} · ${fmt(u.all_minutes)} all time</p>
+        </div>
+        ${u.user_id === me.id ? '' : `<button data-toggle="${u.user_id}" class="btn-ghost text-xs ${u.disabled ? '' : 'text-red-300'}">${u.disabled ? 'Enable' : 'Disable'}</button>`}
+      </div>
+      <div class="flex items-center gap-2">
+        <select data-scope="${u.user_id}" class="input py-1 text-xs">
+          <option value="today">Today</option>
+          <option value="week">This week</option>
+          <option value="all">All time</option>
+        </select>
+        <button data-reset="${u.user_id}" class="btn-ghost text-xs text-red-300 flex-none">Reset times</button>
+      </div>
+    </li>`).join('');
+}
+
+$('admin-users').onclick = async (e) => {
+  const { toggle, reset } = e.target.dataset;
+  const u = adminUsers.find((x) => x.user_id === (toggle ?? reset));
+  if (!u) return;
+  if (toggle) {
+    const disable = !u.disabled;
+    if (disable && !(await ask(`Disable ${u.display_name}? They'll be greyed out on the leaderboard with a cheater badge and won't be able to log time.`))) return;
+    const { error } = await sb.rpc('admin_set_disabled', { target: u.user_id, make_disabled: disable });
+    if (error) return flash(error.message, true);
+    flash(`${u.display_name} ${disable ? 'disabled' : 'enabled'}`);
+  }
+  if (reset) {
+    const sel = document.querySelector(`[data-scope="${u.user_id}"]`);
+    const label = sel.selectedOptions[0].textContent.toLowerCase();
+    if (!(await ask(`Delete all of ${u.display_name}'s saved sessions for ${label}? This can't be undone.`))) return;
+    const { data, error } = await sb.rpc('admin_reset_times', { target: u.user_id, scope: sel.value });
+    if (error) return flash(error.message, true);
+    flash(`Removed ${fmt(data)} from ${u.display_name} (${label})`);
+  }
+  loadAdmin();
 };
 
 setMode(false);

@@ -11,6 +11,13 @@ create table if not exists public.profiles (
   created_at   timestamptz not null default now()
 );
 
+-- is_admin: can disable members and reset their times (Admin tab).
+-- disabled: flagged as a cheater. Can still see everything but can't log
+-- time, run a timer or post messages; shown greyed out on the leaderboard.
+-- Neither is updatable by users themselves (only display_name is granted).
+alter table public.profiles add column if not exists is_admin boolean not null default false;
+alter table public.profiles add column if not exists disabled boolean not null default false;
+
 create table if not exists public.study_sessions (
   id           bigint generated always as identity primary key,
   user_id      uuid not null default auth.uid() references public.profiles (id) on delete cascade,
@@ -32,13 +39,28 @@ language sql stable
 set search_path = ''
 as $$ select (now() at time zone 'Africa/Johannesburg')::date $$;
 
--- True if the caller has a profile. SECURITY DEFINER so policies on
--- profiles can use it without recursing into their own RLS.
+-- True if the caller has a profile (disabled or not): can read. SECURITY
+-- DEFINER so policies on profiles can use it without recursing into their
+-- own RLS.
 create or replace function public.is_member()
 returns boolean
 language sql stable security definer
 set search_path = ''
 as $$ select exists (select 1 from public.profiles where id = auth.uid()) $$;
+
+-- True if the caller has a profile that isn't disabled: can write.
+create or replace function public.is_active()
+returns boolean
+language sql stable security definer
+set search_path = ''
+as $$ select exists (select 1 from public.profiles where id = auth.uid() and not disabled) $$;
+
+-- True if the caller is an admin (and not disabled).
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer
+set search_path = ''
+as $$ select exists (select 1 from public.profiles where id = auth.uid() and is_admin and not disabled) $$;
 
 -- ---------- Auto-create a profile on sign-up --------------------------
 
@@ -94,12 +116,15 @@ create policy profiles_select_members on public.profiles
   for select to authenticated
   using (public.is_member());
 
+-- (profiles_select_own is no longer needed: disabled members can read)
+drop policy if exists profiles_select_own on public.profiles;
+
 -- profiles: a user can rename only themselves
 drop policy if exists profiles_update_own on public.profiles;
 create policy profiles_update_own on public.profiles
   for update to authenticated
-  using (id = auth.uid())
-  with check (id = auth.uid());
+  using (public.is_active() and id = auth.uid())
+  with check (public.is_active() and id = auth.uid());
 
 -- study_sessions: every member can read all sessions
 drop policy if exists sessions_select_members on public.study_sessions;
@@ -111,20 +136,20 @@ create policy sessions_select_members on public.study_sessions
 drop policy if exists sessions_insert_own on public.study_sessions;
 create policy sessions_insert_own on public.study_sessions
   for insert to authenticated
-  with check (public.is_member() and user_id = auth.uid());
+  with check (public.is_active() and user_id = auth.uid());
 
 -- study_sessions: edit only your own rows (and can't hand them to someone else)
 drop policy if exists sessions_update_own on public.study_sessions;
 create policy sessions_update_own on public.study_sessions
   for update to authenticated
-  using (public.is_member() and user_id = auth.uid())
-  with check (public.is_member() and user_id = auth.uid());
+  using (public.is_active() and user_id = auth.uid())
+  with check (public.is_active() and user_id = auth.uid());
 
 -- study_sessions: delete only your own rows
 drop policy if exists sessions_delete_own on public.study_sessions;
 create policy sessions_delete_own on public.study_sessions
   for delete to authenticated
-  using (public.is_member() and user_id = auth.uid());
+  using (public.is_active() and user_id = auth.uid());
 
 -- ---------- Streaks (removed) ---------------------------------------
 -- The leaderboard used to depend on this view, so drop that first.
@@ -172,18 +197,18 @@ create policy live_select_members on public.live_timers
 drop policy if exists live_insert_own on public.live_timers;
 create policy live_insert_own on public.live_timers
   for insert to authenticated
-  with check (public.is_member() and user_id = auth.uid());
+  with check (public.is_active() and user_id = auth.uid());
 
 drop policy if exists live_update_own on public.live_timers;
 create policy live_update_own on public.live_timers
   for update to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  using (public.is_active() and user_id = auth.uid())
+  with check (public.is_active() and user_id = auth.uid());
 
 drop policy if exists live_delete_own on public.live_timers;
 create policy live_delete_own on public.live_timers
   for delete to authenticated
-  using (user_id = auth.uid());
+  using (public.is_active() and user_id = auth.uid());
 
 -- Start, pause, resume or auto-pause: store the caller's timer.
 -- elapsed_ms = total counted so far; run_ms = length of the current run
@@ -233,18 +258,18 @@ create policy msg_select_members on public.board_messages
 drop policy if exists msg_insert_own on public.board_messages;
 create policy msg_insert_own on public.board_messages
   for insert to authenticated
-  with check (public.is_member() and user_id = auth.uid());
+  with check (public.is_active() and user_id = auth.uid());
 
 drop policy if exists msg_update_own on public.board_messages;
 create policy msg_update_own on public.board_messages
   for update to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  using (public.is_active() and user_id = auth.uid())
+  with check (public.is_active() and user_id = auth.uid());
 
 drop policy if exists msg_delete_own on public.board_messages;
 create policy msg_delete_own on public.board_messages
   for delete to authenticated
-  using (user_id = auth.uid());
+  using (public.is_active() and user_id = auth.uid());
 
 -- Post (or replace) the caller's message; the hour starts again.
 create or replace function public.set_board_message(body text)
@@ -274,6 +299,7 @@ as $$ delete from public.board_messages where user_id = auth.uid() $$;
 -- page needs it for the weekly average tier). week_minutes and all_minutes
 -- break ties on equal time. message is the person's leaderboard message if
 -- it's under an hour old; message_left_ms is how long until it expires.
+-- disabled marks members flagged as cheaters (the page greys them out).
 
 -- The return columns change between versions, so recreate it from scratch.
 drop function if exists public.leaderboard(text);
@@ -282,7 +308,7 @@ create function public.leaderboard(period text)
 returns table (user_id uuid, display_name text, total_minutes bigint, today_minutes bigint,
                week_minutes bigint, all_minutes bigint,
                live_ms bigint, live_running boolean, run_left_ms bigint, forgotten boolean,
-               message text, message_left_ms bigint)
+               message text, message_left_ms bigint, disabled boolean)
 language sql stable security invoker
 set search_path = ''
 as $$
@@ -314,7 +340,8 @@ as $$
          greatest(l.limit_ms - l.run_ms, 0),
          coalesce(l.forgotten or l.run_ms >= l.limit_ms, false),
          m.body,
-         (extract(epoch from m.posted_at + interval '1 hour' - now()) * 1000)::bigint
+         (extract(epoch from m.posted_at + interval '1 hour' - now()) * 1000)::bigint,
+         p.disabled
   from public.profiles p
   left join totals t on t.user_id = p.id
   left join live l on l.user_id = p.id
@@ -362,6 +389,82 @@ as $$
   group by d.day
   order by d.day;
 $$;
+
+-- ---------- Admin ----------------------------------------------------
+-- Admins are set here, by email. Add more emails to the list if needed.
+update public.profiles set is_admin = true
+where id in (select u.id from auth.users u where lower(u.email) in ('philipventer3007@gmail.com'));
+
+-- Every member (disabled ones too) with email and all-time total.
+create or replace function public.admin_list_users()
+returns table (user_id uuid, display_name text, email text, is_admin boolean, disabled boolean, all_minutes bigint)
+language plpgsql stable security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.is_admin() then raise exception 'Admins only'; end if;
+  return query
+    select p.id, p.display_name, u.email::text, p.is_admin, p.disabled,
+           coalesce((select sum(s.minutes) from public.study_sessions s where s.user_id = p.id), 0)::bigint
+    from public.profiles p
+    left join auth.users u on u.id = p.id
+    order by p.disabled, lower(p.display_name);
+end
+$$;
+
+-- Disable or re-enable a member. Disabling also takes down their live timer
+-- and message.
+create or replace function public.admin_set_disabled(target uuid, make_disabled boolean)
+returns void
+language plpgsql volatile security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_admin() then raise exception 'Admins only'; end if;
+  if target = auth.uid() then raise exception 'You can''t disable yourself'; end if;
+  update public.profiles set disabled = make_disabled where id = target;
+  if not found then raise exception 'No such member'; end if;
+  if make_disabled then
+    delete from public.live_timers where user_id = target;
+    delete from public.board_messages where user_id = target;
+  end if;
+end
+$$;
+
+-- Delete a member's saved sessions for 'today' | 'week' (Monday start) | 'all'.
+-- Returns the minutes removed. A timer running in their browser is untouched.
+create or replace function public.admin_reset_times(target uuid, scope text)
+returns bigint
+language plpgsql volatile security definer
+set search_path = ''
+as $$
+declare
+  removed bigint;
+begin
+  if not public.is_admin() then raise exception 'Admins only'; end if;
+  if scope not in ('today', 'week', 'all') then raise exception 'Unknown period %', scope; end if;
+  with d as (
+    delete from public.study_sessions s
+    where s.user_id = target
+      and case scope
+            when 'today' then s.session_date = public.jhb_today()
+            when 'week'  then s.session_date >= date_trunc('week', public.jhb_today())::date
+            else true
+          end
+    returning s.minutes
+  )
+  select coalesce(sum(d.minutes), 0) into removed from d;
+  return removed;
+end
+$$;
+
+revoke execute on function public.admin_list_users()                 from public, anon;
+revoke execute on function public.admin_set_disabled(uuid, boolean)  from public, anon;
+revoke execute on function public.admin_reset_times(uuid, text)      from public, anon;
+grant  execute on function public.admin_list_users()                 to authenticated;
+grant  execute on function public.admin_set_disabled(uuid, boolean)  to authenticated;
+grant  execute on function public.admin_reset_times(uuid, text)      to authenticated;
 
 -- ---------- Leaderboard reactions (removed) -------------------------
 -- Drops the old reactions feature from databases that already have it.
