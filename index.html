@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Desk Hours</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+  [hidden] { display: none !important; }
+  /* Red "recording" light next to a name on the leaderboard */
+  @keyframes flicker { 0%, 40%, 70%, 100% { opacity: 1; } 45% { opacity: .3; } 52% { opacity: .9; } 58% { opacity: .25; } }
+  .live-dot { flex: none; width: .55rem; height: .55rem; border-radius: 9999px; background: #ef4444;
+              box-shadow: 0 0 6px 2px rgb(239 68 68 / .7); animation: flicker 1.4s infinite; }
+  /* Leaderboard position: tier background behind a dark fade (so text stays readable),
+     framed by a gradient border and soft glow in the tier's colours. Plain = no tier. */
+  .pos { --c1: #475569; --c2: #1e293b; --bg: none;
+         border: 1.5px solid transparent; border-radius: .9rem; text-shadow: 0 1px 3px rgb(0 0 0 / .9);
+         background: linear-gradient(90deg, rgb(2 6 23 / .9), rgb(2 6 23 / .6) 55%, rgb(2 6 23 / .25)) padding-box,
+                     var(--bg) center / cover padding-box,
+                     linear-gradient(#0f172a, #0f172a) padding-box,
+                     linear-gradient(135deg, var(--c1), var(--c2) 50%, var(--c1)) border-box;
+         box-shadow: 0 0 14px -5px var(--c1), inset 0 1px 0 rgb(255 255 255 / .06); }
+  .tier-badge { flex: none; height: 1.35rem; width: auto; filter: drop-shadow(0 0 4px var(--c1)); }
+</style>
+<style type="text/tailwindcss">
+  .card { @apply bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3; }
+  .input { @apply w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-400; }
+  .label { @apply block text-sm text-slate-400 mb-1; }
+  .btn { @apply rounded-lg px-4 py-2 font-semibold bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-50; }
+  .btn-ghost { @apply rounded-lg px-3 py-2 bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-30; }
+  .tab-on { @apply bg-emerald-500 text-slate-950 hover:bg-emerald-400; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased">
+<div class="max-w-xl mx-auto px-4 pb-16">
+
+  <header class="flex items-center justify-between py-5">
+    <div>
+      <h1 class="text-2xl font-bold">📚 Desk Hours</h1>
+      <p id="who" class="text-sm text-slate-400"></p>
+    </div>
+    <button id="signout" class="btn-ghost text-sm" hidden>Sign out</button>
+  </header>
+
+  <div id="msg" class="fixed top-4 inset-x-4 mx-auto max-w-md rounded-lg px-4 py-3 text-sm text-white shadow-lg z-10" hidden></div>
+
+  <!-- Auth -->
+  <section id="auth" class="card">
+    <h2 id="auth-title" class="text-lg font-semibold">Log in</h2>
+    <form id="auth-form" class="space-y-3">
+      <div id="name-row" hidden>
+        <label class="label" for="auth-name">Display name</label>
+        <input id="auth-name" class="input" maxlength="40" placeholder="What your friends see">
+      </div>
+      <div>
+        <label class="label" for="auth-email">Email</label>
+        <input id="auth-email" type="email" class="input" required autocomplete="email">
+      </div>
+      <div>
+        <label class="label" for="auth-password">Password</label>
+        <input id="auth-password" type="password" class="input" required minlength="6">
+      </div>
+      <button id="auth-submit" class="btn w-full">Log in</button>
+    </form>
+    <button id="auth-toggle" class="text-sm text-emerald-400 hover:underline">New here? Sign up</button>
+  </section>
+
+  <!-- Nav -->
+  <nav id="nav" class="grid grid-cols-3 gap-2 mb-4" hidden>
+    <button data-section="home" class="btn-ghost">Home</button>
+    <button data-section="log" class="btn-ghost">Sessions</button>
+    <button data-section="stats" class="btn-ghost">My stats</button>
+  </nav>
+
+  <!-- Home: timer + leaderboard -->
+  <section id="home" class="space-y-4" hidden>
+    <div class="card">
+      <h2 class="font-semibold">Timer</h2>
+      <input id="timer-subject" class="input" placeholder="Subject (e.g. Maths)" maxlength="60">
+      <div id="timer-display" class="text-5xl font-mono text-center py-2 tabular-nums">00:00:00</div>
+      <p id="timer-forgotten" class="text-sm text-amber-300" hidden>Paused automatically after 6 hours without a break. Resume if you're still studying, Stop &amp; save (you can edit the minutes afterwards under Sessions), or Discard.</p>
+      <div class="flex gap-2">
+        <button id="timer-discard" class="btn-ghost flex-1 text-red-300" hidden>Discard</button>
+        <button id="timer-pause" class="btn-ghost flex-1" hidden>Pause</button>
+        <button id="timer-btn" class="btn flex-1">Start</button>
+      </div>
+      <p class="text-xs text-slate-500">Keeps running if you refresh or close the tab. Paused time isn't counted. Pauses itself after 6 hours without a break. Timer sessions under 5 minutes are not saved.</p>
+    </div>
+
+    <div class="card">
+      <h2 class="text-lg font-semibold">🏆 Leaderboard</h2>
+      <div class="grid grid-cols-3 gap-2">
+        <button data-period="today" class="btn-ghost">Today</button>
+        <button data-period="week" class="btn-ghost">This week</button>
+        <button data-period="all" class="btn-ghost">All time</button>
+      </div>
+      <form id="note-form" class="flex gap-2">
+        <input id="note-input" class="input" maxlength="80" placeholder="Leave a message (disappears after 1 hour)">
+        <button id="note-post" class="btn">Post</button>
+        <button id="note-clear" type="button" class="btn-ghost text-red-300" hidden>Remove</button>
+      </form>
+      <ol id="board-list" class="space-y-2"></ol>
+      <p id="board-updated" class="text-xs text-slate-500 text-center"></p>
+    </div>
+  </section>
+
+  <!-- Sessions: manual entry + edit/delete -->
+  <section id="log" class="space-y-4" hidden>
+    <form id="manual-form" class="card">
+      <h2 id="manual-title" class="font-semibold">Add a session manually</h2>
+      <input id="m-subject" class="input" placeholder="Subject" maxlength="60" required>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label" for="m-minutes">Minutes</label>
+          <input id="m-minutes" type="number" min="1" step="1" class="input" required>
+        </div>
+        <div>
+          <label class="label" for="m-date">Date</label>
+          <input id="m-date" type="date" class="input" required>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button id="m-submit" class="btn flex-1">Save session</button>
+        <button id="m-cancel" type="button" class="btn-ghost" hidden>Cancel</button>
+      </div>
+    </form>
+
+    <div class="card">
+      <h2 class="font-semibold">My recent sessions</h2>
+      <ul id="sessions" class="divide-y divide-slate-800"></ul>
+    </div>
+  </section>
+
+  <!-- My stats -->
+  <section id="stats" class="space-y-4" hidden>
+    <div class="card">
+      <h2 class="font-semibold">Time per subject</h2>
+      <div id="s-subjects" class="space-y-3"></div>
+    </div>
+    <div class="card">
+      <div class="flex items-center justify-between">
+        <button id="cal-prev" class="btn-ghost text-sm" aria-label="Previous month">‹</button>
+        <h2 id="cal-title" class="font-semibold"></h2>
+        <button id="cal-next" class="btn-ghost text-sm" aria-label="Next month">›</button>
+      </div>
+      <div class="grid grid-cols-7 gap-1 text-center text-xs text-slate-500">
+        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+      </div>
+      <div id="cal-grid" class="grid grid-cols-7 gap-1"></div>
+      <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span id="cal-total"></span>
+        <span class="flex items-center gap-1">Less
+          <span class="w-3 h-3 rounded-sm bg-slate-800"></span><span class="w-3 h-3 rounded-sm bg-emerald-900"></span>
+          <span class="w-3 h-3 rounded-sm bg-emerald-700"></span><span class="w-3 h-3 rounded-sm bg-emerald-600"></span>
+          <span class="w-3 h-3 rounded-sm bg-emerald-500"></span><span class="w-3 h-3 rounded-sm bg-emerald-400"></span>
+        More</span>
+      </div>
+    </div>
+    <form id="name-form" class="card">
+      <h2 class="font-semibold">Display name</h2>
+      <div class="flex gap-2">
+        <input id="name-input" class="input" maxlength="40" required>
+        <button class="btn">Save</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<script>
+// ===================== CONFIG: fill these in (see README) =====================
+const SUPABASE_URL = 'https://zjsvghimtwwddnytegqw.supabase.co';            // e.g. https://abcd1234.supabase.co
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpqc3ZnaGltdHd3ZGRueXRlZ3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzMjYxMTcsImV4cCI6MjEwNzkwMjExN30.586zaPf5YYHJNBzJxcGCSUyyjKya38bKWgp-M4NDmM8';  // the public "anon" key, never service_role
+// ==============================================================================
+
+const TZ = 'Africa/Johannesburg';
+const MIN_TIMER_MINUTES = 5;
+const FORGOTTEN_MS = 6 * 3600 * 1000; // a run this long without a pause counts as forgotten (matches schema.sql)
+const TIMER_KEY = 'deskhours.timer';
+const $ = (id) => document.getElementById(id);
+
+if (SUPABASE_URL.startsWith('YOUR_') || SUPABASE_ANON_KEY.startsWith('YOUR_')) {
+  document.body.innerHTML = '<p style="padding:24px">Fill in SUPABASE_URL and SUPABASE_ANON_KEY at the top of the script in index.html (see README).</p>';
+  throw new Error('Supabase not configured');
+}
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let me = null;          // signed-in auth user
+let signupMode = false;
+let period = 'today';   // leaderboard tab
+let editingId = null;   // session being edited in the manual form
+let mySessions = [];
+let tickHandle = null, boardHandle = null, liveHandle = null, flashHandle = null;
+
+// ---------- Helpers ----------
+const fmt = (min) => { const h = Math.floor(min / 60), m = min % 60; return h ? `${h}h ${m}m` : `${m}m`; };
+const todayJhb = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date()); // YYYY-MM-DD
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+function dayLabel(iso) {
+  if (iso === todayJhb()) return 'Today';
+  return new Date(iso + 'T12:00:00Z').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+function flash(text, isError = false) {
+  const el = $('msg');
+  el.textContent = text;
+  el.classList.toggle('bg-red-600', isError);
+  el.classList.toggle('bg-emerald-700', !isError);
+  el.hidden = false;
+  clearTimeout(flashHandle);
+  flashHandle = setTimeout(() => (el.hidden = true), isError ? 6000 : 3000);
+}
+
+// ---------- Auth ----------
+function setMode(signup) {
+  signupMode = signup;
+  $('name-row').hidden = !signup;
+  $('auth-title').textContent = signup ? 'Create an account' : 'Log in';
+  $('auth-submit').textContent = signup ? 'Sign up' : 'Log in';
+  $('auth-toggle').textContent = signup ? 'Have an account? Log in' : 'New here? Sign up';
+  $('auth-password').autocomplete = signup ? 'new-password' : 'current-password';
+}
+
+$('auth-toggle').onclick = () => setMode(!signupMode);
+$('signout').onclick = () => sb.auth.signOut();
+
+$('auth-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const email = $('auth-email').value.trim();
+  const password = $('auth-password').value;
+  $('auth-submit').disabled = true;
+  let res;
+  if (signupMode) {
+    const name = $('auth-name').value.trim();
+    if (!name) { $('auth-submit').disabled = false; return flash('Pick a display name', true); }
+    // The display name travels as user metadata; a DB trigger creates the profile.
+    res = await sb.auth.signUp({ email, password, options: { data: { display_name: name } } });
+    if (!res.error && !res.data.session) flash('Account created. Confirm your email, then log in.');
+  } else {
+    res = await sb.auth.signInWithPassword({ email, password });
+  }
+  $('auth-submit').disabled = false;
+  if (res.error) flash(res.error.message, true);
+};
+
+// Fires on page load (existing session), login and logout.
+sb.auth.onAuthStateChange((_event, session) => {
+  const user = session?.user ?? null;
+  if (user?.id === me?.id) return; // ignore token refreshes
+  me = user;
+  setTimeout(() => (me ? enterApp() : leaveApp()), 0); // don't call Supabase inside the callback
+});
+
+function enterApp() {
+  $('auth').hidden = true;
+  $('nav').hidden = false;
+  $('signout').hidden = false;
+  loadProfile();
+  resumeTimer();
+  resetManual();
+  show('home');
+  clearInterval(boardHandle);
+  boardHandle = setInterval(() => { if (!$('home').hidden) loadBoard(); }, 30000);
+  clearInterval(liveHandle);
+  liveHandle = setInterval(() => { if (!$('home').hidden) renderBoard(); }, 1000);
+  const t = readTimer();
+  if (t) publishTimer(t); // share a timer started before this page load
+}
+
+function leaveApp() {
+  clearInterval(boardHandle);
+  clearInterval(liveHandle);
+  clearInterval(tickHandle);
+  for (const id of ['nav', 'signout', 'home', 'log', 'stats']) $(id).hidden = true;
+  $('auth').hidden = false;
+  $('who').textContent = '';
+  setMode(false);
+}
+
+async function loadProfile() {
+  const { data, error } = await sb.from('profiles').select('display_name').eq('id', me.id).maybeSingle();
+  if (error) return flash(error.message, true);
+  const name = data?.display_name ?? '';
+  $('who').textContent = name ? `Hi, ${name}` : '';
+  $('name-input').value = name;
+}
+
+// ---------- Section switching ----------
+function show(name) {
+  for (const id of ['home', 'log', 'stats']) $(id).hidden = id !== name;
+  document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('tab-on', b.dataset.section === name));
+  if (name === 'home') loadBoard();
+  if (name === 'log') loadSessions();
+  if (name === 'stats') loadStats();
+}
+document.querySelectorAll('#nav button').forEach((b) => (b.onclick = () => show(b.dataset.section)));
+
+// ---------- Timer (state lives in localStorage, so it survives refresh) ----------
+// Stored as { start, subject, pausedAt, pausedMs, resumedAt, forgotten }: pausedAt is
+// set while paused, pausedMs is the total time spent in earlier pauses, resumedAt is
+// when the current run started, and forgotten marks an automatic 6-hour pause.
+function readTimer() {
+  try { return JSON.parse(localStorage.getItem(TIMER_KEY)); } catch { return null; }
+}
+const elapsedMs = (t) => (t.pausedAt ?? Date.now()) - t.start - (t.pausedMs ?? 0);
+// Timers started before resumedAt existed: start + pausedMs is never later than the real resume.
+const runStart = (t) => t.resumedAt ?? t.start + (t.pausedMs ?? 0);
+
+// Pauses a run that has gone 6 hours without a break, as of the 6-hour mark.
+// Returns true if it did.
+function autoPause() {
+  const t = readTimer();
+  if (!t || t.pausedAt || Date.now() - runStart(t) < FORGOTTEN_MS) return false;
+  t.pausedAt = runStart(t) + FORGOTTEN_MS;
+  t.forgotten = true;
+  localStorage.setItem(TIMER_KEY, JSON.stringify(t));
+  resumeTimer();
+  publishTimer(t);
+  flash('Your timer ran for 6 hours without a break, so it was paused.', true);
+  return true;
+}
+
+function renderTick() {
+  if (autoPause()) return;
+  const t = readTimer();
+  const s = t ? Math.max(0, Math.floor(elapsedMs(t) / 1000)) : 0;
+  const pad = (n) => String(n).padStart(2, '0');
+  $('timer-display').textContent = `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`;
+}
+
+function resumeTimer() {
+  const t = readTimer();
+  if (t) $('timer-subject').value = t.subject;
+  $('timer-subject').disabled = !!t;
+  $('timer-btn').textContent = t ? 'Stop & save' : 'Start';
+  $('timer-btn').classList.toggle('bg-red-500', !!t);
+  $('timer-btn').classList.toggle('hover:bg-red-400', !!t);
+  $('timer-pause').hidden = !t;
+  $('timer-pause').textContent = t?.pausedAt ? 'Resume' : 'Pause';
+  $('timer-display').classList.toggle('animate-pulse', !!t?.pausedAt);
+  $('timer-forgotten').hidden = !t?.forgotten;
+  $('timer-discard').hidden = !t?.pausedAt;
+  clearInterval(tickHandle);
+  renderTick();
+  if (t && !t.pausedAt) tickHandle = setInterval(renderTick, 1000);
+}
+
+// Shares your timer with friends (red light + live time on the leaderboard).
+// null means the timer stopped.
+async function publishTimer(t) {
+  const { error } = t
+    ? await sb.rpc('set_live_timer', {
+        elapsed_ms: Math.max(0, Math.round(elapsedMs(t))),
+        run_ms: t.pausedAt ? 0 : Math.max(0, Date.now() - runStart(t)),
+        running: !t.pausedAt,
+        forgotten: !!t.forgotten,
+      })
+    : await sb.rpc('clear_live_timer');
+  if (error) return flash(error.message, true);
+  if (!$('home').hidden) loadBoard();
+}
+
+$('timer-pause').onclick = () => {
+  const t = readTimer();
+  if (!t) return;
+  if (t.pausedAt) {
+    t.pausedMs = (t.pausedMs ?? 0) + (Date.now() - t.pausedAt);
+    t.pausedAt = null;
+    t.resumedAt = Date.now();
+    t.forgotten = false;
+  } else {
+    t.pausedAt = Date.now();
+  }
+  localStorage.setItem(TIMER_KEY, JSON.stringify(t));
+  resumeTimer();
+  publishTimer(t);
+};
+
+// Only offered while paused, so a running session can't be thrown away by a stray tap.
+$('timer-discard').onclick = () => {
+  const t = readTimer();
+  if (!t?.pausedAt || !confirm(`Discard this ${fmt(Math.floor(elapsedMs(t) / 60000))} session of ${t.subject}? It won't be saved.`)) return;
+  localStorage.removeItem(TIMER_KEY);
+  resumeTimer();
+  publishTimer(null);
+  flash('Session discarded');
+};
+
+$('timer-btn').onclick = async () => {
+  const t = readTimer();
+  if (!t) {
+    const subject = $('timer-subject').value.trim();
+    if (!subject) return flash('Enter a subject first', true);
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: Date.now(), resumedAt: Date.now(), subject }));
+    resumeTimer();
+    return publishTimer(readTimer());
+  }
+  const elapsedSec = Math.floor(elapsedMs(t) / 1000);
+  if (elapsedSec < MIN_TIMER_MINUTES * 60) {
+    localStorage.removeItem(TIMER_KEY);
+    resumeTimer();
+    publishTimer(null);
+    return flash(`Not saved: that was only ${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s. Timer sessions under ${MIN_TIMER_MINUTES} minutes are discarded.`, true);
+  }
+  $('timer-btn').disabled = true;
+  // session_date is left out so the DB default (today in Johannesburg) is used.
+  const { error } = await sb.from('study_sessions').insert({ subject: t.subject, minutes: Math.round(elapsedSec / 60) });
+  $('timer-btn').disabled = false;
+  if (error) return flash(`Couldn't save (${error.message}). The timer is still running, so try again.`, true);
+  localStorage.removeItem(TIMER_KEY);
+  resumeTimer();
+  flash(`Saved ${fmt(Math.round(elapsedSec / 60))} of ${t.subject}`);
+  publishTimer(null);
+};
+
+// ---------- Manual entry + edit ----------
+function resetManual() {
+  editingId = null;
+  $('manual-form').reset();
+  $('m-date').value = todayJhb();
+  $('m-date').max = todayJhb();
+  $('manual-title').textContent = 'Add a session manually';
+  $('m-submit').textContent = 'Save session';
+  $('m-cancel').hidden = true;
+}
+$('m-cancel').onclick = resetManual;
+
+function startEdit(s) {
+  editingId = s.id;
+  $('m-subject').value = s.subject;
+  $('m-minutes').value = s.minutes;
+  $('m-date').value = s.session_date;
+  $('manual-title').textContent = 'Edit session';
+  $('m-submit').textContent = 'Update session';
+  $('m-cancel').hidden = false;
+  $('manual-form').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('manual-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const row = {
+    subject: $('m-subject').value.trim(),
+    minutes: parseInt($('m-minutes').value, 10),
+    session_date: $('m-date').value,
+  };
+  if (!row.subject || !(row.minutes > 0) || !row.session_date) return flash('Fill in subject, minutes (more than 0) and date', true);
+  const q = editingId
+    ? sb.from('study_sessions').update(row).eq('id', editingId)
+    : sb.from('study_sessions').insert(row);
+  const { error } = await q;
+  if (error) return flash(error.message, true);
+  flash(editingId ? 'Session updated' : 'Session saved');
+  resetManual();
+  loadSessions();
+};
+
+// ---------- My recent sessions (edit / delete own) ----------
+async function loadSessions() {
+  const { data, error } = await sb.from('study_sessions')
+    .select('id, subject, minutes, session_date')
+    .eq('user_id', me.id)
+    .order('session_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) return flash(error.message, true);
+  mySessions = data;
+  $('sessions').innerHTML = data.length ? data.map((s) => `
+    <li class="flex items-center gap-2 py-2">
+      <div class="flex-1 min-w-0">
+        <p class="truncate">${esc(s.subject)}</p>
+        <p class="text-xs text-slate-500">${dayLabel(s.session_date)} · ${fmt(s.minutes)}</p>
+      </div>
+      <button data-edit="${s.id}" class="btn-ghost text-xs">Edit</button>
+      <button data-del="${s.id}" class="btn-ghost text-xs text-red-300">Delete</button>
+    </li>`).join('') : '<li class="py-2 text-sm text-slate-500">Nothing logged yet.</li>';
+}
+
+$('sessions').onclick = async (e) => {
+  const { edit, del } = e.target.dataset;
+  if (edit) startEdit(mySessions.find((s) => String(s.id) === edit));
+  if (del && confirm('Delete this session?')) {
+    const { error } = await sb.from('study_sessions').delete().eq('id', del);
+    if (error) return flash(error.message, true);
+    if (String(editingId) === del) resetManual();
+    flash('Session deleted');
+    loadSessions();
+  }
+};
+
+// ---------- Leaderboard ----------
+// Live timers are added to saved time, so the board is ranked here and the
+// times tick every second between the 30s refreshes. Everyone is listed;
+// forgotten timers (6 h without a pause) are greyed out at the bottom.
+let boardRows = [], boardPeriod = period, boardFetchedAt = 0, boardKey = '';
+
+document.querySelectorAll('[data-period]').forEach((b) => (b.onclick = () => { period = b.dataset.period; loadBoard(); }));
+
+async function loadBoard() {
+  document.querySelectorAll('[data-period]').forEach((b) => b.classList.toggle('tab-on', b.dataset.period === period));
+  const p = period;
+  const { data, error } = await sb.rpc('leaderboard', { period: p });
+  if (p !== period) return; // tab changed while loading
+  if (error) return flash(error.message, true);
+  boardRows = data;
+  boardPeriod = p;
+  boardFetchedAt = Date.now();
+  boardKey = ''; // force a full redraw
+  renderBoard();
+  $('board-updated').textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 30s`;
+}
+
+const fmtSec = (sec) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  return h ? `${h}h ${pad(m)}m ${pad(s)}s` : `${m}m ${pad(s)}s`;
+};
+
+// One tier per full hour: under 1 h is plain, 1 h Silver, 2 h Diamond, ...
+// 7 h and up Unreal. Images live in the Ranks folder.
+const TIERS = [
+  ['Silver', '#c7d0e0', '#6b7a99'],
+  ['Diamond', '#6d9bff', '#2b3f8f'],
+  ['Platinum', '#7fe8e0', '#1f5f5c'],
+  ['Gold', '#ffc94a', '#8a5a00'],
+  ['Elite', '#3ff0c8', '#0d4a44'],
+  ['Champion', '#ff8a3d', '#8f2a0c'],
+  ['Unreal', '#e46bff', '#4b2fd1'],
+].map(([name, c1, c2], i) => {
+  const dir = `Ranks/${i + 1} - ${name}/${name}`;
+  return { name, c1, c2, logo: encodeURI(`${dir}_logo.png`), bg: encodeURI(`${dir}_background_web.jpg`) };
+});
+const tierFor = (secs) => (secs < 3600 ? null : TIERS[Math.min(Math.floor(secs / 3600), TIERS.length) - 1]);
+
+// Seconds that decide the tier: Today = time today; This week = average per
+// day; All time = no tiers. done = full days of the week already over
+// (Monday = 0). Today only counts as a day if that raises the average, so
+// it isn't dragged down by hours of today that haven't happened yet and
+// isn't blown up by dividing by a fraction of a day. Both views agree once
+// the day ends.
+function tierSecs(period, secs, todaySecs) {
+  if (period === 'today') return secs;
+  if (period !== 'week') return null;
+  const done = (new Date(todayJhb() + 'T12:00:00Z').getUTCDay() + 6) % 7;
+  const past = secs - todaySecs;
+  return Math.max(done ? past / done : 0, secs / (done + 1));
+}
+
+function rankedBoard() {
+  const since = Date.now() - boardFetchedAt;
+  const rows = boardRows.map((r) => {
+    // A run that hits 6 h between refreshes becomes forgotten right away.
+    const running = r.live_running && since < r.run_left_ms;
+    const forgotten = r.forgotten || (r.live_running && !running);
+    const liveMs = r.live_ms == null ? null : r.live_ms + (r.live_running ? Math.min(since, r.run_left_ms) : 0);
+    const liveSecs = Math.floor((liveMs ?? 0) / 1000); // a live timer is always today's time
+    const secs = r.total_minutes * 60 + liveSecs;
+    const ts = tierSecs(boardPeriod, secs, r.today_minutes * 60 + liveSecs);
+    // Messages that pass their hour between refreshes disappear right away.
+    const message = r.message != null && since < r.message_left_ms ? r.message : null;
+    return { ...r, running, forgotten, secs, message, tierBasis: ts, tier: ts == null ? null : tierFor(ts),
+             weekSecs: r.week_minutes * 60 + liveSecs, allSecs: r.all_minutes * 60 + liveSecs,
+             time: liveMs == null ? fmt(r.total_minutes) : fmtSec(secs) };
+  }).sort((a, b) => a.forgotten - b.forgotten || b.secs - a.secs || b.weekSecs - a.weekSecs
+                    || b.allSecs - a.allSecs || a.display_name.localeCompare(b.display_name));
+  // Equal time is broken by this week's total, then all-time; only a full tie shares a rank.
+  rows.forEach((r, i) => {
+    const prev = rows[i - 1];
+    const tied = prev && prev.forgotten === r.forgotten && prev.secs === r.secs
+                 && prev.weekSecs === r.weekSecs && prev.allSecs === r.allSecs;
+    r.rank = tied ? prev.rank : i + 1;
+  });
+  return rows;
+}
+
+// Redraws the list only when order, ranks, lights or tiers change (so the light's
+// flicker isn't restarted every second); otherwise just updates the times.
+function renderBoard() {
+  const rows = rankedBoard();
+  $('note-clear').hidden = !rows.find((r) => r.user_id === me.id)?.message;
+  const key = rows.map((r) => `${r.user_id}:${r.rank}:${r.running}:${r.forgotten}:${r.tier?.name}:${r.message != null}`).join();
+  if (key === boardKey) {
+    rows.forEach((r) => { const el = document.querySelector(`[data-time="${r.user_id}"]`); if (el) el.textContent = r.time; });
+    return;
+  }
+  boardKey = key;
+  $('board-list').innerHTML = rows.length ? rows.map((r) => {
+    const mine = r.user_id === me.id;
+    const t = r.tier;
+    const style = t ? ` style="--c1:${t.c1};--c2:${t.c2};--bg:url('${t.bg}')"` : '';
+    return `
+    <li class="pos flex items-center gap-3 px-4 py-3 ${r.forgotten ? 'opacity-40 grayscale' : ''}"${style}${r.forgotten ? ' title="Forgotten timer: paused after 6 hours without a break"' : ''}>
+      <span class="w-6 text-lg font-bold text-slate-300">${r.rank}</span>
+      <span class="flex-1 min-w-0">
+        <span class="flex items-center gap-2">
+          ${r.running ? '<span class="live-dot" title="Studying now"></span>' : ''}
+          <span class="truncate font-medium">${esc(r.display_name)}</span>
+          ${t ? `<img src="${t.logo}" alt="${t.name}" title="${t.name} tier${boardPeriod === 'week' ? ` · averaging ${fmt(Math.floor(r.tierBasis / 60))} a day` : ''}" class="tier-badge">` : ''}
+          ${mine ? '<span class="flex-none text-xs text-emerald-300">(you)</span>' : ''}
+        </span>
+        ${r.message ? `<span class="block mt-0.5 text-sm italic text-slate-300 break-words">💬 ${esc(r.message)}</span>` : ''}
+      </span>
+      <span data-time="${r.user_id}" class="w-28 text-right font-mono tabular-nums">${r.time}</span>
+    </li>`;
+  }).join('') : '<li class="text-center text-slate-500 py-6">No one has joined yet.</li>';
+}
+
+// Your leaderboard message: posting replaces the old one and restarts its hour.
+$('note-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const body = $('note-input').value.trim();
+  if (!body) return flash('Type a message first', true);
+  $('note-post').disabled = true;
+  const { error } = await sb.rpc('set_board_message', { body });
+  $('note-post').disabled = false;
+  if (error) return flash(error.message, true);
+  $('note-input').value = '';
+  flash('Message posted. It disappears in an hour.');
+  loadBoard();
+};
+
+$('note-clear').onclick = async () => {
+  const { error } = await sb.rpc('clear_board_message');
+  if (error) return flash(error.message, true);
+  flash('Message removed');
+  loadBoard();
+};
+
+// ---------- My stats ----------
+async function loadStats() {
+  loadCalendar();
+  const subjects = await sb.rpc('my_subject_totals');
+  if (subjects.error) return flash(subjects.error.message, true);
+
+  const max = Math.max(1, ...subjects.data.map((s) => s.total_minutes));
+  $('s-subjects').innerHTML = subjects.data.length ? subjects.data.map((s) => `
+    <div>
+      <div class="flex justify-between text-sm mb-1">
+        <span class="truncate">${esc(s.subject)}</span><span class="text-slate-400">${fmt(s.total_minutes)}</span>
+      </div>
+      <div class="h-3 bg-slate-800 rounded-full overflow-hidden">
+        <div class="h-full bg-emerald-500 rounded-full" style="width:${((s.total_minutes / max) * 100).toFixed(1)}%"></div>
+      </div>
+    </div>`).join('') : '<p class="text-sm text-slate-500">No sessions yet.</p>';
+}
+
+// ---------- Calendar heatmap (one month, darker = less, brighter = more) ----------
+const HEAT = [ // [min minutes, classes]
+  [0, 'bg-slate-800 text-slate-500'],
+  [1, 'bg-emerald-900 text-emerald-200'],
+  [30, 'bg-emerald-700 text-emerald-50'],
+  [60, 'bg-emerald-600 text-white'],
+  [120, 'bg-emerald-500 text-slate-950'],
+  [240, 'bg-emerald-400 text-slate-950'],
+];
+const heat = (min) => HEAT.filter(([t]) => min >= t).pop()[1];
+const fmtShort = (min) => (min >= 60 ? `${Math.floor(min / 60)}h${min % 60 ? String(min % 60).padStart(2, '0') : ''}` : `${min}m`);
+let calMonth = null; // 'YYYY-MM-01' being shown
+
+function shiftMonth(iso, n) {
+  const [y, m] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 10);
+}
+
+async function loadCalendar() {
+  const thisMonth = todayJhb().slice(0, 8) + '01';
+  calMonth ??= thisMonth;
+  const { data, error } = await sb.rpc('my_month_totals', { month_start: calMonth });
+  if (error) return flash(error.message, true);
+
+  const first = new Date(calMonth + 'T00:00:00Z');
+  const today = todayJhb();
+  $('cal-title').textContent = first.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  $('cal-next').disabled = calMonth >= thisMonth;
+  const blanks = (first.getUTCDay() + 6) % 7; // Monday-first offset
+  $('cal-grid').innerHTML = '<div></div>'.repeat(blanks) + data.map((d) => `
+    <div title="${dayLabel(d.day)}: ${fmt(d.total_minutes)}"
+         class="aspect-square rounded-md flex flex-col items-center justify-center gap-0.5 ${heat(d.total_minutes)}
+                ${d.day === today ? 'ring-2 ring-white' : ''} ${d.day > today ? 'opacity-30' : ''}">
+      <span class="text-xs font-semibold leading-none">${Number(d.day.slice(8))}</span>
+      ${d.total_minutes ? `<span class="text-[10px] leading-none">${fmtShort(d.total_minutes)}</span>` : ''}
+    </div>`).join('');
+  const total = data.reduce((sum, d) => sum + d.total_minutes, 0);
+  const studied = data.filter((d) => d.total_minutes > 0).length;
+  $('cal-total').textContent = `${fmt(total)} · ${plural(studied, 'day')} studied`;
+}
+
+$('cal-prev').onclick = () => { calMonth = shiftMonth(calMonth, -1); loadCalendar(); };
+$('cal-next').onclick = () => { calMonth = shiftMonth(calMonth, 1); loadCalendar(); };
+
+$('name-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('name-input').value.trim();
+  if (!name) return flash('Name can\'t be empty', true);
+  const { error } = await sb.from('profiles').update({ display_name: name }).eq('id', me.id);
+  if (error) return flash(error.message, true);
+  flash('Name updated');
+  loadProfile();
+};
+
+setMode(false);
+</script>
+</body>
+</html>
