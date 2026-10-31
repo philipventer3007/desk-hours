@@ -15,14 +15,33 @@
               box-shadow: 0 0 6px 2px rgb(239 68 68 / .7); animation: flicker 1.4s infinite; }
   /* Leaderboard position: tier background behind a dark fade (so text stays readable),
      framed by a gradient border and soft glow in the tier's colours. Plain = no tier. */
-  .pos { --c1: #475569; --c2: #1e293b; --bg: none;
+  /* Tiered rows come alive: the border gradient slowly turns, the tier picture drifts
+     behind the fade and the glow breathes. Higher tiers (--lvl 0-6) move a little faster. */
+  @property --spin { syntax: '<angle>'; inherits: false; initial-value: 135deg; }
+  @keyframes spin { to { --spin: 495deg; } }
+  @keyframes drift { 0% { background-position: 0 0, 0% 30%, 0 0, 0 0; } 100% { background-position: 0 0, 100% 70%, 0 0, 0 0; } }
+  @keyframes breathe { 0%, 100% { box-shadow: 0 0 14px -5px var(--c1), inset 0 1px 0 rgb(255 255 255 / .06); }
+                       50% { box-shadow: 0 0 22px -3px var(--c1), inset 0 1px 0 rgb(255 255 255 / .12); } }
+  .pos { --c1: #475569; --c2: #1e293b; --bg: none; --lvl: 0;
          border: 1.5px solid transparent; border-radius: .9rem; text-shadow: 0 1px 3px rgb(0 0 0 / .9);
          background: linear-gradient(90deg, rgb(2 6 23 / .9), rgb(2 6 23 / .6) 55%, rgb(2 6 23 / .25)) padding-box,
-                     var(--bg) center / cover padding-box,
+                     var(--bg) 50% 50% / 125% auto padding-box,
                      linear-gradient(#0f172a, #0f172a) padding-box,
-                     linear-gradient(135deg, var(--c1), var(--c2) 50%, var(--c1)) border-box;
-         box-shadow: 0 0 14px -5px var(--c1), inset 0 1px 0 rgb(255 255 255 / .06); }
-  .tier-badge { flex: none; height: 1.35rem; width: auto; filter: drop-shadow(0 0 4px var(--c1)); }
+                     linear-gradient(var(--spin), var(--c1), var(--c2) 50%, var(--c1)) border-box;
+         box-shadow: 0 0 14px -5px var(--c1), inset 0 1px 0 rgb(255 255 255 / .06);
+         transition: transform .25s ease, filter .25s ease; }
+  .pos.tiered { animation: spin calc(9s - var(--lvl) * .8s) linear infinite,
+                           drift calc(26s - var(--lvl) * 2s) ease-in-out infinite alternate,
+                           breathe calc(4.5s - var(--lvl) * .3s) ease-in-out infinite; }
+  .pos.tiered:hover { transform: translateY(-1px) scale(1.01); filter: brightness(1.12); }
+  /* Tier logo: bobs gently with a pulsing glow and a glint every few seconds */
+  @keyframes bob { 0%, 100% { transform: translateY(0) rotate(0); filter: drop-shadow(0 0 3px var(--c1)); }
+                   50% { transform: translateY(-2px) rotate(-4deg); filter: drop-shadow(0 0 9px var(--c1)) brightness(1.15); } }
+  @keyframes glint { 0%, 85%, 100% { filter: drop-shadow(0 0 4px var(--c1)); }
+                     90% { filter: drop-shadow(0 0 12px var(--c1)) brightness(1.6) saturate(1.3); } }
+  .tier-badge { flex: none; height: 1.35rem; width: auto; filter: drop-shadow(0 0 4px var(--c1));
+                animation: bob calc(3.2s - var(--lvl) * .2s) ease-in-out infinite; transform-origin: 50% 70%; }
+  .tier-wrap { flex: none; display: inline-flex; animation: glint 6s ease-in-out infinite; }
   /* Disabled member: greyed out, but the cheater badge keeps its colour */
   .cheater .dim { opacity: .4; filter: grayscale(1); }
   /* Cheater badge: a red pill in the same style as the tier frames - gradient border,
@@ -39,10 +58,41 @@
                           background: linear-gradient(90deg, transparent, rgb(255 255 255 / .28), transparent);
                           animation: sheen 3.5s ease-in-out infinite; }
   .cheater-badge svg { width: .75rem; height: .75rem; flex: none; filter: drop-shadow(0 0 2px rgb(254 202 202 / .6)); }
-  @media (prefers-reduced-motion: reduce) { .cheater-badge::after { display: none; } }
+  @keyframes alarm { 0%, 100% { box-shadow: 0 0 10px -2px rgb(239 68 68 / .65), inset 0 1px 0 rgb(255 255 255 / .2); }
+                     50% { box-shadow: 0 0 16px 0 rgb(239 68 68 / .9), inset 0 1px 0 rgb(255 255 255 / .3); } }
+  .cheater-badge { animation: alarm 2s ease-in-out infinite; }
+  @keyframes wave { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-12deg); } 75% { transform: rotate(8deg); } }
+  .cheater-badge svg { transform-origin: 20% 90%; animation: wave 2s ease-in-out infinite; }
+
+  /* Page background: slow drifting aurora with faint twinkling specks behind everything */
+  @keyframes aurora { 0% { transform: translate3d(-4%, -3%, 0) rotate(0deg) scale(1); }
+                      50% { transform: translate3d(3%, 2%, 0) rotate(8deg) scale(1.08); }
+                      100% { transform: translate3d(-2%, 4%, 0) rotate(-6deg) scale(1.02); } }
+  @keyframes twinkle { 0%, 100% { opacity: .35; } 50% { opacity: .8; } }
+  body::before, body::after { content: ''; position: fixed; pointer-events: none; z-index: -1; }
+  body::before { inset: -25%; filter: blur(60px); opacity: .55;
+                 background: radial-gradient(35% 30% at 20% 25%, rgb(16 185 129 / .35), transparent 70%),
+                             radial-gradient(30% 35% at 80% 20%, rgb(99 102 241 / .35), transparent 70%),
+                             radial-gradient(40% 30% at 60% 85%, rgb(217 70 239 / .25), transparent 70%),
+                             radial-gradient(25% 25% at 15% 80%, rgb(56 189 248 / .2), transparent 70%);
+                 animation: aurora 40s ease-in-out infinite alternate; }
+  body::after { inset: 0;
+                background-image: radial-gradient(1px 1px at 12% 18%, #fff, transparent),
+                                  radial-gradient(1px 1px at 72% 9%, #cbd5e1, transparent),
+                                  radial-gradient(1.5px 1.5px at 38% 62%, #e2e8f0, transparent),
+                                  radial-gradient(1px 1px at 88% 48%, #fff, transparent),
+                                  radial-gradient(1px 1px at 22% 86%, #cbd5e1, transparent),
+                                  radial-gradient(1.5px 1.5px at 58% 33%, #fff, transparent),
+                                  radial-gradient(1px 1px at 93% 82%, #e2e8f0, transparent),
+                                  radial-gradient(1px 1px at 5% 50%, #fff, transparent);
+                background-size: 420px 420px; animation: twinkle 5s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
 </style>
 <style type="text/tailwindcss">
-  .card { @apply bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3; }
+  .card { @apply bg-slate-900/80 backdrop-blur border border-slate-800 rounded-2xl p-4 space-y-3; }
   .input { @apply w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-400; }
   .label { @apply block text-sm text-slate-400 mb-1; }
   .btn { @apply rounded-lg px-4 py-2 font-semibold bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-50; }
@@ -591,7 +641,7 @@ const TIERS = [
   ['Unreal', '#e46bff', '#4b2fd1'],
 ].map(([name, c1, c2], i) => {
   const dir = `Ranks/${i + 1} - ${name}/${name}`;
-  return { name, c1, c2, logo: encodeURI(`${dir}_logo.png`), bg: encodeURI(`${dir}_background_web.jpg`) };
+  return { name, c1, c2, lvl: i, logo: encodeURI(`${dir}_logo.png`), bg: encodeURI(`${dir}_background_web.jpg`) };
 });
 const tierFor = (secs) => (secs < 3600 ? null : TIERS[Math.min(Math.floor(secs / 3600), TIERS.length) - 1]);
 
@@ -655,15 +705,15 @@ function renderBoard() {
   $('board-list').innerHTML = rows.length ? rows.map((r) => {
     const mine = r.user_id === me.id;
     const t = r.tier;
-    const style = t ? ` style="--c1:${t.c1};--c2:${t.c2};--bg:url('${t.bg}')"` : '';
+    const style = t ? ` style="--c1:${t.c1};--c2:${t.c2};--lvl:${t.lvl};--bg:url('${t.bg}')"` : '';
     return `
-    <li class="pos flex items-center gap-3 px-4 py-3 ${r.forgotten && !r.disabled ? 'opacity-40 grayscale' : ''} ${r.disabled ? 'cheater' : ''}"${style}${r.disabled ? ' title="Flagged as a cheater by the admin"' : r.forgotten ? ' title="Forgotten timer: paused after 3 hours without a break"' : ''}>
+    <li class="pos ${t ? 'tiered' : ''} flex items-center gap-3 px-4 py-3 ${r.forgotten && !r.disabled ? 'opacity-40 grayscale' : ''} ${r.disabled ? 'cheater' : ''}"${style}${r.disabled ? ' title="Flagged as a cheater by the admin"' : r.forgotten ? ' title="Forgotten timer: paused after 3 hours without a break"' : ''}>
       <span class="dim w-6 text-lg font-bold text-slate-300">${r.rank ?? '–'}</span>
       <span class="flex-1 min-w-0">
         <span class="flex items-center gap-2">
           ${r.running ? '<span class="live-dot" title="Studying now"></span>' : ''}
           <span class="dim truncate font-medium">${esc(r.display_name)}</span>
-          ${t ? `<img src="${t.logo}" alt="${t.name}" title="${t.name} tier${boardPeriod === 'week' ? ` · averaging ${fmt(Math.floor(r.tierBasis / 60))} a day` : ''}" class="tier-badge">` : ''}
+          ${t ? `<span class="tier-wrap"><img src="${t.logo}" alt="${t.name}" title="${t.name} tier${boardPeriod === 'week' ? ` · averaging ${fmt(Math.floor(r.tierBasis / 60))} a day` : ''}" class="tier-badge"></span>` : ''}
           ${r.disabled ? '<span class="cheater-badge"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 1.5a.75.75 0 0 1 .75.75V3h8.4a.6.6 0 0 1 .48.96L10.9 6.25l1.73 2.29a.6.6 0 0 1-.48.96h-8.4v5.25a.75.75 0 0 1-1.5 0V2.25A.75.75 0 0 1 3 1.5Z"/></svg>Cheater</span>' : ''}
           ${mine ? '<span class="dim flex-none text-xs text-emerald-300">(you)</span>' : ''}
         </span>
