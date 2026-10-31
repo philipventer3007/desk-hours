@@ -95,13 +95,13 @@
       <h2 class="font-semibold">Timer</h2>
       <input id="timer-subject" class="input" placeholder="Subject (e.g. Maths)" maxlength="60">
       <div id="timer-display" class="text-5xl font-mono text-center py-2 tabular-nums">00:00:00</div>
-      <p id="timer-forgotten" class="text-sm text-amber-300" hidden>Paused automatically after 6 hours without a break. Resume if you're still studying, Stop &amp; save (you can edit the minutes afterwards under Sessions), or Discard.</p>
+      <p id="timer-forgotten" class="text-sm text-amber-300" hidden>Paused automatically after 3 hours without a break. Resume if you're still studying, Stop &amp; save (you can edit the minutes afterwards under Sessions), or Discard.</p>
       <div class="flex gap-2">
         <button id="timer-discard" class="btn-ghost flex-1 text-red-300" hidden>Discard</button>
         <button id="timer-pause" class="btn-ghost flex-1" hidden>Pause</button>
         <button id="timer-btn" class="btn flex-1">Start</button>
       </div>
-      <p class="text-xs text-slate-500">Keeps running if you refresh or close the tab. Paused time isn't counted. Pauses itself after 6 hours without a break. Timer sessions under 5 minutes are not saved.</p>
+      <p class="text-xs text-slate-500">Keeps running if you refresh or close the tab. Paused time isn't counted. Pauses itself after 3 hours without a break. Timer sessions under 5 minutes are not saved.</p>
     </div>
 
     <div class="card">
@@ -200,7 +200,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const TZ = 'Africa/Johannesburg';
 const MIN_TIMER_MINUTES = 5;
-const FORGOTTEN_MS = 6 * 3600 * 1000; // a run this long without a pause counts as forgotten (matches schema.sql)
+const FORGOTTEN_MS = 3 * 3600 * 1000; // a run this long without a pause counts as forgotten (matches schema.sql)
 const TIMER_KEY = 'deskhours.timer';
 const $ = (id) => document.getElementById(id);
 
@@ -346,7 +346,7 @@ document.querySelectorAll('#nav button').forEach((b) => (b.onclick = () => show(
 // ---------- Timer (state lives in localStorage, so it survives refresh) ----------
 // Stored as { start, subject, pausedAt, pausedMs, resumedAt, forgotten }: pausedAt is
 // set while paused, pausedMs is the total time spent in earlier pauses, resumedAt is
-// when the current run started, and forgotten marks an automatic 6-hour pause.
+// when the current run started, and forgotten marks an automatic 3-hour pause.
 function readTimer() {
   try { return JSON.parse(localStorage.getItem(TIMER_KEY)); } catch { return null; }
 }
@@ -354,7 +354,7 @@ const elapsedMs = (t) => (t.pausedAt ?? Date.now()) - t.start - (t.pausedMs ?? 0
 // Timers started before resumedAt existed: start + pausedMs is never later than the real resume.
 const runStart = (t) => t.resumedAt ?? t.start + (t.pausedMs ?? 0);
 
-// Pauses a run that has gone 6 hours without a break, as of the 6-hour mark.
+// Pauses a run that has gone 3 hours without a break, as of the 3-hour mark.
 // Returns true if it did.
 function autoPause() {
   const t = readTimer();
@@ -364,7 +364,7 @@ function autoPause() {
   localStorage.setItem(TIMER_KEY, JSON.stringify(t));
   resumeTimer();
   publishTimer(t);
-  flash('Your timer ran for 6 hours without a break, so it was paused.', true);
+  flash('Your timer ran for 3 hours without a break, so it was paused.', true);
   return true;
 }
 
@@ -539,7 +539,7 @@ $('sessions').onclick = async (e) => {
 // Live timers are added to saved time, so the board is ranked here and the
 // times tick every second between the 30s refreshes. Everyone is listed:
 // people with time first, then disabled members (greyed out, cheater badge,
-// no rank), then people on 0, then forgotten timers (6 h without a pause).
+// no rank), then people on 0, then forgotten timers (3 h without a pause).
 let boardRows = [], boardPeriod = period, boardFetchedAt = 0, boardKey = '';
 
 document.querySelectorAll('[data-period]').forEach((b) => (b.onclick = () => { period = b.dataset.period; loadBoard(); }));
@@ -597,7 +597,7 @@ function tierSecs(period, secs, todaySecs) {
 function rankedBoard() {
   const since = Date.now() - boardFetchedAt;
   const rows = boardRows.map((r) => {
-    // A run that hits 6 h between refreshes becomes forgotten right away.
+    // A run that hits 3 h between refreshes becomes forgotten right away.
     const running = r.live_running && since < r.run_left_ms;
     const forgotten = r.forgotten || (r.live_running && !running);
     const liveMs = r.live_ms == null ? null : r.live_ms + (r.live_running ? Math.min(since, r.run_left_ms) : 0);
@@ -642,7 +642,7 @@ function renderBoard() {
     const t = r.tier;
     const style = t ? ` style="--c1:${t.c1};--c2:${t.c2};--bg:url('${t.bg}')"` : '';
     return `
-    <li class="pos flex items-center gap-3 px-4 py-3 ${r.forgotten && !r.disabled ? 'opacity-40 grayscale' : ''} ${r.disabled ? 'cheater' : ''}"${style}${r.disabled ? ' title="Flagged as a cheater by the admin"' : r.forgotten ? ' title="Forgotten timer: paused after 6 hours without a break"' : ''}>
+    <li class="pos flex items-center gap-3 px-4 py-3 ${r.forgotten && !r.disabled ? 'opacity-40 grayscale' : ''} ${r.disabled ? 'cheater' : ''}"${style}${r.disabled ? ' title="Flagged as a cheater by the admin"' : r.forgotten ? ' title="Forgotten timer: paused after 3 hours without a break"' : ''}>
       <span class="dim w-6 text-lg font-bold text-slate-300">${r.rank ?? '–'}</span>
       <span class="flex-1 min-w-0">
         <span class="flex items-center gap-2">

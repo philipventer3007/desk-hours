@@ -161,8 +161,8 @@ drop view if exists public.user_streaks;
 -- on the leaderboard. base_ms is the time counted before the current run;
 -- running_since is when the current run started (null while paused). Times
 -- come from the database clock, so wrong device clocks don't matter.
--- A run that goes 6 hours without a pause counts as a forgotten timer: it
--- stops counting at the 6 h mark and shows as paused and greyed out.
+-- A run that goes 3 hours without a pause counts as a forgotten timer: it
+-- stops counting at the 3 h mark and shows as paused and greyed out.
 
 -- An earlier version stored elapsed_ms/running/updated_at. Rebuild the table
 -- if it has that shape; timers are shared again the next time the app opens.
@@ -330,7 +330,7 @@ as $$
   live as (
     select l.user_id, l.base_ms, l.running_since, l.forgotten,
            (extract(epoch from now() - l.running_since) * 1000)::bigint as run_ms,
-           6 * 3600 * 1000::bigint as limit_ms
+           3 * 3600 * 1000::bigint as limit_ms
     from public.live_timers l
   )
   select p.id, p.display_name, coalesce(t.total, 0), coalesce(t.today_total, 0),
