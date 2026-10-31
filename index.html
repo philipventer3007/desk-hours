@@ -25,6 +25,21 @@
   .tier-badge { flex: none; height: 1.35rem; width: auto; filter: drop-shadow(0 0 4px var(--c1)); }
   /* Disabled member: greyed out, but the cheater badge keeps its colour */
   .cheater .dim { opacity: .4; filter: grayscale(1); }
+  /* Cheater badge: a red pill in the same style as the tier frames - gradient border,
+     soft glow and a slow sheen sweeping across it */
+  @keyframes sheen { 0%, 70% { transform: translateX(-120%) skewX(-20deg); } 100% { transform: translateX(220%) skewX(-20deg); } }
+  .cheater-badge { position: relative; overflow: hidden; flex: none; display: inline-flex; align-items: center; gap: .3rem;
+                   height: 1.35rem; padding: 0 .55rem 0 .45rem; border-radius: 9999px; border: 1px solid transparent;
+                   font-size: .625rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #fee2e2;
+                   text-shadow: 0 1px 2px rgb(69 10 10 / .9);
+                   background: linear-gradient(180deg, #b91c1c, #7f1d1d) padding-box,
+                               linear-gradient(135deg, #fca5a5, #991b1b 50%, #f87171) border-box;
+                   box-shadow: 0 0 10px -2px rgb(239 68 68 / .65), inset 0 1px 0 rgb(255 255 255 / .2); }
+  .cheater-badge::after { content: ''; position: absolute; inset: 0; width: 40%;
+                          background: linear-gradient(90deg, transparent, rgb(255 255 255 / .28), transparent);
+                          animation: sheen 3.5s ease-in-out infinite; }
+  .cheater-badge svg { width: .75rem; height: .75rem; flex: none; filter: drop-shadow(0 0 2px rgb(254 202 202 / .6)); }
+  @media (prefers-reduced-motion: reduce) { .cheater-badge::after { display: none; } }
 </style>
 <style type="text/tailwindcss">
   .card { @apply bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3; }
@@ -649,7 +664,7 @@ function renderBoard() {
           ${r.running ? '<span class="live-dot" title="Studying now"></span>' : ''}
           <span class="dim truncate font-medium">${esc(r.display_name)}</span>
           ${t ? `<img src="${t.logo}" alt="${t.name}" title="${t.name} tier${boardPeriod === 'week' ? ` · averaging ${fmt(Math.floor(r.tierBasis / 60))} a day` : ''}" class="tier-badge">` : ''}
-          ${r.disabled ? '<span class="flex-none rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">🚩 Cheater</span>' : ''}
+          ${r.disabled ? '<span class="cheater-badge"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 1.5a.75.75 0 0 1 .75.75V3h8.4a.6.6 0 0 1 .48.96L10.9 6.25l1.73 2.29a.6.6 0 0 1-.48.96h-8.4v5.25a.75.75 0 0 1-1.5 0V2.25A.75.75 0 0 1 3 1.5Z"/></svg>Cheater</span>' : ''}
           ${mine ? '<span class="dim flex-none text-xs text-emerald-300">(you)</span>' : ''}
         </span>
         ${r.message ? `<span class="dim block mt-0.5 text-sm italic text-slate-300 break-words">💬 ${esc(r.message)}</span>` : ''}
