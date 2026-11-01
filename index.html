@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>Desk Hours</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#020617">
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <style>
@@ -105,7 +108,7 @@
 
   <header class="flex items-center justify-between py-5">
     <div>
-      <h1 class="text-2xl font-bold">📚 Desk Hours</h1>
+      <h1 class="flex items-center gap-2.5 text-2xl font-bold"><img src="icon.svg" alt="" class="h-9 w-9 drop-shadow-[0_0_10px_rgb(52_211_153_/_.35)]">Desk Hours</h1>
       <p id="who" class="text-sm text-slate-400"></p>
     </div>
     <button id="signout" class="btn-ghost text-sm" hidden>Sign out</button>

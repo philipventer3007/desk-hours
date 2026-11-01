@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6ee7b7"/>
+      <stop offset=".5" stop-color="#0f766e" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde68a" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#fbbf24" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="pool" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#fcd34d" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#fcd34d" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="arm" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#6ee7b7"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#cbd5e1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="url(#tile)"/>
+  <rect x="1.75" y="1.75" width="60.5" height="60.5" rx="14.25" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
+
+  <!-- Light from the lamp -->
+  <path d="M31.2 23.8 L44.8 20.2 L52 46 L21 46 Z" fill="url(#beam)"/>
+  <ellipse cx="36" cy="46" rx="20" ry="5" fill="url(#pool)"/>
+
+  <!-- Lamp: base, two arm segments, joints, shade, bulb -->
+  <rect x="9" y="47" width="12" height="3" rx="1.5" fill="#059669"/>
+  <path d="M15 47 L19.5 31 L35.5 13.5" fill="none" stroke="url(#arm)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="19.5" cy="31" r="2.1" fill="#a7f3d0"/>
+  
+  <g transform="translate(38 22) rotate(-15)">
+    <ellipse cx="0" cy="0" rx="9" ry="4" fill="#fde68a" opacity=".3"/>
+    <path d="M-3 -9 Q0 -10.4 3 -9 L7 -0.6 Q0 2 -7 -0.6 Z" fill="url(#arm)"/>
+    <path d="M-3 -9 Q0 -10.4 3 -9" fill="none" stroke="#d1fae5" stroke-width=".9" stroke-linecap="round"/>
+    <ellipse cx="0" cy="0" rx="6.8" ry="1.6" fill="#fef3c7"/>
+  </g>
+  <circle cx="35.5" cy="13.5" r="1.8" fill="#a7f3d0"/>
+
+  <!-- Open book in the pool of light -->
+  <path d="M36 44 Q30 41 23 42 L23 50 Q30 49 36 52 Z" fill="url(#page)"/>
+  <path d="M36 44 Q42 41 49 42 L49 50 Q42 49 36 52 Z" fill="url(#page)"/>
+  <path d="M36 44 L36 52" stroke="#94a3b8" stroke-width=".8"/>
+  <path d="M26 45 Q30 44.4 33.5 46 M26 47.5 Q30 46.9 33.5 48.5 M38.5 46 Q42 44.4 46 45 M38.5 48.5 Q42 46.9 46 47.5" fill="none" stroke="#94a3b8" stroke-width=".7" stroke-linecap="round"/>
+
+  <!-- Desk line -->
+  <path d="M8 52.5 H56" stroke="#334155" stroke-width="1.2" stroke-linecap="round"/>
+</svg>
